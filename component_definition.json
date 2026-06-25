@@ -1,6 +1,6 @@
 {
-    "directory": "admm_federate",
-    "execute_function": "python opf_federate.py",
+    "directory": "swod_federate",
+    "execute_function": "python federate.py",
     "static_inputs": [
         {
             "type": "",
@@ -8,139 +8,83 @@
         },
         {
             "type": "",
+            "port_id": "window_length"
+        },
+        {
+            "type": "",
+            "port_id": "overlap_length"
+        },
+        {
+            "type": "",
+            "port_id": "fs"
+        },
+        {
+            "type": "",
+            "port_id": "f0_nom"
+        },
+        {
+            "type": "",
+            "port_id": "peak_thresh"
+        },
+        {
+            "type": "",
+            "port_id": "freq_max"
+        },
+        {
+            "type": "",
+            "port_id": "sideband_tol"
+        },
+        {
+            "type": "",
+            "port_id": "freq_match_tol"
+        },
+        {
+            "type": "",
             "port_id": "deltat"
-        },
-        {
-            "type": "",
-            "port_id": "t_steps"
-        },
-        {
-            "type": "",
-            "port_id": "max_itr"
-        },
-        {
-            "type": "",
-            "port_id": "control_type"
-        },
-        {
-            "type": "",
-            "port_id": "switches"
-        },
-        {
-            "type": "",
-            "port_id": "source_bus"
-        },
-        {
-            "type": "",
-            "port_id": "source_line"
-        },
-        {
-            "type": "",
-            "port_id": "relaxed"
-        },
-        {
-            "type": "",
-            "port_id": "rho_vup"
-        },
-        {
-            "type": "",
-            "port_id": "rho_sup"
-        },
-        {
-            "type": "",
-            "port_id": "rho_vdn"
-        },
-        {
-            "type": "",
-            "port_id": "rho_sdn"
-        },
-        {
-            "type": "",
-            "port_id": "vup_tol"
-        },
-        {
-            "type": "",
-            "port_id": "sdn_tol"
         }
     ],
     "dynamic_inputs": [
         {
-            "type": "VoltagesReal",
-            "port_id": "voltage_real"
-        },
-        {
-            "type": "VoltagesImaginary",
-            "port_id": "voltage_imag"
-        },
-        {
-            "type": "Topology",
-            "port_id": "topology"
-        },
-        {
-            "type": "Injections",
-            "port_id": "injections"
-        },
-        {
-            "type": "PowersReal",
-            "port_id": "power_real"
-        },
-        {
-            "type": "PowersImaginary",
-            "port_id": "power_imag"
-        },
-        {
-            "type": "PowersReal",
-            "port_id": "sub_p"
-        },
-        {
-            "type": "PowersImaginary",
-            "port_id": "sub_q"
-        },
-        {
             "type": "VoltagesMagnitude",
-            "port_id": "sub_v"
+            "port_id": "voltages_abs"
+        },
+        {
+            "type": "CurrentsMagnitude",
+            "port_id": "currents_abs"
         }
     ],
     "dynamic_outputs": [
         {
-            "type": "PowersReal",
-            "port_id": "estimated_power"
+            "type": "MeasurementArray",
+            "port_id": "oscillation_frequency"
         },
         {
             "type": "MeasurementArray",
-            "port_id": "solver_stats"
+            "port_id": "oscillation_amplitude"
         },
         {
-            "type": "PowersMagnitude",
-            "port_id": "power_mag"
+            "type": "MeasurementArray",
+            "port_id": "harmonic_frequency"
         },
         {
-            "type": "PowersAngle",
-            "port_id": "power_angle"
+            "type": "MeasurementArray",
+            "port_id": "harmonic_amplitude"
         },
         {
-            "type": "VoltagesMagnitude",
-            "port_id": "voltage_mag"
+            "type": "MeasurementArray",
+            "port_id": "real_ssp"
         },
         {
-            "type": "VoltagesAngle",
-            "port_id": "voltage_angle"
+            "type": "MeasurementArray",
+            "port_id": "reactive_ssp"
         },
         {
             "type": "PowersReal",
-            "port_id": "pub_p"
+            "port_id": "watts_rms"
         },
         {
             "type": "PowersImaginary",
-            "port_id": "pub_q"
-        },
-        {
-            "type": "VoltagesMagnitude",
-            "port_id": "pub_v"
-        },
-        {
-            "type": "CommandList",
-            "port_id": "pub_c"
+            "port_id": "vars_rms"
         }
     ]
 }

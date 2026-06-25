@@ -3,9 +3,9 @@ requires = ["setuptools>=72.1.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pnnl-dopf-admm"
+name = "pnnl-emt-swod"
 version = "0.1.0"
-description = "OEDISI Distribution Optimal Power Flow Federate (DOPF) using relaxed ADMM"
+description = "OEDISI Transient sliding wave oscillation detection (SWOD)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -24,7 +24,6 @@ dependencies = [
 	"plotly",
 	"numpy",
 	"pandas",
-	"OpenDSSDirect.py[extras]==0.7.0",
 	"boto3",
 	"xarray",
 	"oedisi~=3.0",
@@ -33,8 +32,8 @@ dependencies = [
 ]
 
 [project.scripts]
-admm-federate-server = "admm_federate.server:main"
-admm-federate-sim = "admm_federate.opf_federate:main"
+swod-server = "pnnl_emt_swod.server:main"
+swod-sim = "pnnl_emt_swod.federate:main"
 
 [project.optional-dependencies]
 dev = [
