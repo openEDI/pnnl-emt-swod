@@ -1,5 +1,5 @@
-# pnnl-dopf-admm
+# pnnl-emt-swod
 
-![Version](https://img.shields.io/badge/dynamic/toml?url=https://raw.githubusercontent.com/openEDI/pnnl-dopf-admm/main/pyproject.toml&query=$.project.version&label=version&color=blue)
+OEDISI Transient sliding wave oscillation detection (SWOD) federate.
 
-OEDISI Distribution Optimal Power Flow Federate (DOPF) using relaxed alternating direction method of multipliers (ADMM)
+This component coordinates value exchanges to identify transient sub/super-synchronous oscillations in EMT voltage and current waveforms.

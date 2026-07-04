@@ -40,6 +40,7 @@ import logging
 from pathlib import Path
 
 import helics as h
+import numpy as np
 from oedisi.types.common import BrokerConfig
 from oedisi.types.data_types import (
     CurrentsMagnitude,
@@ -82,6 +83,8 @@ class Federate:
 
     def __init__(self, broker_config: BrokerConfig) -> None:
         self.sub = Subscriptions()
+        self.fed = None
+        self.info = None
 
         # Per-channel sample buffers, keyed by channel label.
         self.channels: list[tuple[str, str]] = []  # (voltage_id, current_id) pairs
@@ -89,11 +92,15 @@ class Federate:
         self.v_buf: dict[str, list[float]] = {}
         self.i_buf: dict[str, list[float]] = {}
 
-        self.load_static_inputs()
-        self.load_input_mapping()
-        self.initialize(broker_config)
-        self.register_subscription()
-        self.register_publication()
+        try:
+            self.load_static_inputs()
+            self.load_input_mapping()
+            self.initialize(broker_config)
+            self.register_subscription()
+            self.register_publication()
+        except Exception:
+            self.destroy()
+            raise
 
         # cfg consumed by swod.process_window (only these four keys are read there)
         self.cfg = {
@@ -138,12 +145,21 @@ class Federate:
         self.sub.voltages_abs = self.fed.register_subscription(
             self.inputs["voltages_abs"], ""
         )
+        self.sub.voltages_abs.option["CONNECTION_OPTIONAL"] = True
+        self.sub.voltages_abs.set_default(
+            VoltagesMagnitude(ids=[], values=[], time=0.0).model_dump_json()
+        )
+
         self.sub.currents_abs = self.fed.register_subscription(
             self.inputs["currents_abs"], ""
         )
+        self.sub.currents_abs.option["CONNECTION_OPTIONAL"] = True
+        self.sub.currents_abs.set_default(
+            CurrentsMagnitude(ids=[], values=[], time=0.0).model_dump_json()
+        )
 
     def register_publication(self) -> None:
-        def _pub(name: str):
+        def _pub(name: str) -> h.HelicsPublication:
             return self.fed.register_publication(name, h.HELICS_DATA_TYPE_STRING, "")
 
         self.pub_oscillation_frequency = _pub("oscillation_frequency")
@@ -196,7 +212,6 @@ class Federate:
 
         for label in self.labels:
             if len(self.v_buf[label]) >= wl and len(self.i_buf[label]) >= wl:
-                import numpy as np
 
                 v_win = np.asarray(self.v_buf[label][:wl], dtype=float)
                 i_win = np.asarray(self.i_buf[label][:wl], dtype=float)
@@ -339,9 +354,12 @@ class Federate:
 
     def destroy(self) -> None:
         """Clean up and disconnect the federate."""
-        h.helicsFederateDisconnect(self.fed)
-        logger.info("Federate disconnected")
-        h.helicsFederateFree(self.fed)
+        if self.fed is not None:
+            h.helicsFederateDisconnect(self.fed)
+            logger.info("Federate disconnected")
+            h.helicsFederateFree(self.fed)
+        if self.info is not None:
+            h.helicsFederateInfoFree(self.info)
         h.helicsCloseLibrary()
 
 
