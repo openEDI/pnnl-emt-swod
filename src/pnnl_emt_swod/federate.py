@@ -60,15 +60,15 @@ logger.setLevel(logging.INFO)
 
 class ComponentParameters(BaseModel):
     name: str
-    window_length: int  # samples per analysis window
-    overlap_length: int = 0  # samples of overlap between consecutive windows
-    fs: float = 500 * 50  # sampling frequency (Hz)
-    f0_nom: float = 50.0  # nominal fundamental frequency (Hz)
-    peak_thresh: float = 0.003  # detection threshold (fraction of fundamental)
-    freq_max: float = 150.0  # ignore peaks above this frequency (Hz)
-    sideband_tol: float = 0.1  # equidistance tolerance for sideband pairs (Hz)
-    freq_match_tol: float = 0.05  # V/I peak frequency match tolerance (Hz)
-    deltat: float = 0.01  # HELICS time step (s)
+    window_length: int  # Tuned: 50000 (2 seconds analysis window length at 25 kHz)
+    overlap_length: int = 0  # Tuned: 25000 (1 second overlap between consecutive windows)
+    fs: float = 500 * 50  # Tuned: 25000.0 (POW reporting rate)
+    f0_nom: float = 50.0  # Tuned: 50.0 (nominal fundamental frequency)
+    peak_thresh: float = 0.003  # Tuned: 0.003 (detection threshold as fraction of fundamental)
+    freq_max: float = 150.0  # Tuned: 150.0 (ignore spectral peaks above this frequency)
+    sideband_tol: float = 0.1  # Tuned: 0.1 (tolerance for equidistance check)
+    freq_match_tol: float = 0.05  # Tuned: 0.05 (tolerance for matching V and I peak frequencies)
+    deltat: float = 1.0  # Tuned: 1.0 (HELICS simulation time step in seconds)
 
 
 class Subscriptions:
@@ -211,7 +211,8 @@ class Federate:
         results: dict[str, dict] = {}
 
         for label in self.labels:
-            if len(self.v_buf[label]) >= wl and len(self.i_buf[label]) >= wl:
+            # Drain buffer to process all complete windows and restore the correct overlap size
+            while len(self.v_buf[label]) >= wl and len(self.i_buf[label]) >= wl:
 
                 v_win = np.asarray(self.v_buf[label][:wl], dtype=float)
                 i_win = np.asarray(self.i_buf[label][:wl], dtype=float)
@@ -344,11 +345,19 @@ class Federate:
 
         try:
             granted = 0.0
-            while granted < h.HELICS_TIME_MAXTIME - self.static.deltat:
+            while granted < h.HELICS_TIME_MAXTIME:
+                if not (
+                    self.sub.voltages_abs.is_updated()
+                    and self.sub.currents_abs.is_updated()
+                ):
+                    granted = h.helicsFederateRequestTime(
+                        self.fed, h.HELICS_TIME_MAXTIME
+                    )
+                    continue
+                self.step(granted)
                 granted = h.helicsFederateRequestTime(
                     self.fed, granted + self.static.deltat
                 )
-                self.step(granted)
         finally:
             self.destroy()
 

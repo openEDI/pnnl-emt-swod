@@ -119,7 +119,11 @@ def refine_frequency(fft_data: np.ndarray, k: int, fs: float, N: int) -> float:
     Xk = fft_data[k]
     Xkm1 = fft_data[k - 1]
     Xkp1 = fft_data[k + 1]
-    delta = -np.real((Xkp1 - Xkm1) / (2 * Xk - Xkm1 - Xkp1))
+    denom = 2 * Xk - Xkm1 - Xkp1
+    if denom == 0:
+        delta = 0.0
+    else:
+        delta = -np.real((Xkp1 - Xkm1) / denom)
     return (k + delta) * fs / N
 
 
@@ -174,8 +178,17 @@ def compute_fft_and_remove_fundamental(
         f_est = refine_frequency(fft_raw, k, fs, N)
 
     # 4 — Adjust window to nearest integer number of fundamental cycles
-    n_cycles = round(N / fs * f_est)  # cycles in original window
-    Nc = round(n_cycles / f_est * fs)  # samples for exactly n_cycles cycles
+    if f_est <= 0:
+        n_cycles = 0
+        Nc = 0
+    else:
+        n_cycles = round(N / fs * f_est)  # cycles in original window
+        Nc = round(n_cycles / f_est * fs)  # samples for exactly n_cycles cycles
+
+    if Nc <= 0 or n_cycles <= 0:
+        f_est = f0_nom
+        n_cycles = round(N / fs * f0_nom)
+        Nc = N
 
     if Nc > N:
         sig_adj = np.zeros(Nc)
