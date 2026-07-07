@@ -39,7 +39,6 @@ def test_currents_magnitude_adapter() -> None:
     assert model.time.timestamp() == 12.5
 
 
-
 def test_measurement_array_adapter() -> None:
     """Test that MeasurementArray serializes output data correctly."""
     data = {

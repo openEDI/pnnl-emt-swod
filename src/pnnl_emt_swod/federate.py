@@ -61,13 +61,19 @@ logger.setLevel(logging.INFO)
 class ComponentParameters(BaseModel):
     name: str
     window_length: int  # Tuned: 50000 (2 seconds analysis window length at 25 kHz)
-    overlap_length: int = 0  # Tuned: 25000 (1 second overlap between consecutive windows)
+    overlap_length: int = (
+        0  # Tuned: 25000 (1 second overlap between consecutive windows)
+    )
     fs: float = 500 * 50  # Tuned: 25000.0 (POW reporting rate)
     f0_nom: float = 50.0  # Tuned: 50.0 (nominal fundamental frequency)
-    peak_thresh: float = 0.003  # Tuned: 0.003 (detection threshold as fraction of fundamental)
+    peak_thresh: float = (
+        0.003  # Tuned: 0.003 (detection threshold as fraction of fundamental)
+    )
     freq_max: float = 150.0  # Tuned: 150.0 (ignore spectral peaks above this frequency)
     sideband_tol: float = 0.1  # Tuned: 0.1 (tolerance for equidistance check)
-    freq_match_tol: float = 0.05  # Tuned: 0.05 (tolerance for matching V and I peak frequencies)
+    freq_match_tol: float = (
+        0.05  # Tuned: 0.05 (tolerance for matching V and I peak frequencies)
+    )
     deltat: float = 1.0  # Tuned: 1.0 (HELICS simulation time step in seconds)
 
 
