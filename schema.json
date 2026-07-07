@@ -1,0 +1,58 @@
+{
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "window_length": {
+      "title": "Window Length",
+      "type": "integer"
+    },
+    "overlap_length": {
+      "default": 0,
+      "title": "Overlap Length",
+      "type": "integer"
+    },
+    "fs": {
+      "default": 25000,
+      "title": "Fs",
+      "type": "number"
+    },
+    "f0_nom": {
+      "default": 50.0,
+      "title": "F0 Nom",
+      "type": "number"
+    },
+    "peak_thresh": {
+      "default": 0.003,
+      "title": "Peak Thresh",
+      "type": "number"
+    },
+    "freq_max": {
+      "default": 150.0,
+      "title": "Freq Max",
+      "type": "number"
+    },
+    "sideband_tol": {
+      "default": 0.1,
+      "title": "Sideband Tol",
+      "type": "number"
+    },
+    "freq_match_tol": {
+      "default": 0.05,
+      "title": "Freq Match Tol",
+      "type": "number"
+    },
+    "deltat": {
+      "default": 0.01,
+      "title": "Deltat",
+      "type": "number"
+    }
+  },
+  "required": [
+    "name",
+    "window_length"
+  ],
+  "title": "ComponentParameters",
+  "type": "object"
+}
