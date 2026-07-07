@@ -312,7 +312,7 @@ class Federate:
                     v_win, i_win, self.static.fs, self.static.f0_nom, self.cfg
                 )
 
-            self._publish_results(results_for_window, t)
+            self._publish_results(results_for_window, voltages.time)
 
         if num_ready_windows > 0:
             for label in self.labels:
