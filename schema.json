@@ -9,7 +9,7 @@
       "type": "integer"
     },
     "overlap_length": {
-      "default": 0,
+      "default": 25000,
       "title": "Overlap Length",
       "type": "integer"
     },
@@ -44,7 +44,7 @@
       "type": "number"
     },
     "deltat": {
-      "default": 0.01,
+      "default": 1.0,
       "title": "Deltat",
       "type": "number"
     }

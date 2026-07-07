@@ -5,34 +5,6 @@ This federate subscribes to streamed voltage- and current-magnitude measurements
 buffers them per channel into fixed-length analysis windows, runs the SWOD
 algorithm (``swod.process_window``) on each completed window, and publishes the
 detection results as the outputs declared in ``component_definition.json``.
-
-Subscriptions (dynamic_inputs)
-------------------------------
-voltages_abs : VoltagesMagnitude   per-step voltage magnitude per node
-currents_abs : CurrentsMagnitude   per-step current magnitude per branch
-
-Publications (dynamic_outputs)
-------------------------------
-oscillation_frequency : MeasurementArray   dominant detected oscillation freq / channel
-oscillation_amplitude : MeasurementArray   amplitude of that oscillation / channel
-harmonic_frequency    : MeasurementArray   STUB (empty) — to be implemented
-harmonic_amplitude    : MeasurementArray   STUB (empty) — to be implemented
-real_ssp              : MeasurementArray   sub/super-synchronous real power (P+ + P-)
-reactive_ssp          : MeasurementArray   sub/super-synchronous reactive power (Q+ + Q-)
-watts_rms             : PowersReal         STUB (empty) — to be implemented
-vars_rms              : PowersImaginary    STUB (empty) — to be implemented
-
-Windowing
----------
-Each granted HELICS time step delivers one scalar sample per channel.  Samples
-are accumulated in a per-channel ring buffer; once a channel reaches
-``window_length`` samples a window is sliced, analysed, and the buffer advanced
-by ``window_length - overlap_length`` samples.
-
-NOTE: voltage and current channels are paired by position (the i-th voltage id is
-paired with the i-th current id).  This is the assumption to validate against the
-upstream feeder/player — VoltagesMagnitude ids (nodes) and CurrentsMagnitude ids
-(branches) generally differ, so the upstream ordering must be confirmed.
 """
 
 import json
@@ -62,7 +34,7 @@ class ComponentParameters(BaseModel):
     name: str
     window_length: int  # Tuned: 50000 (2 seconds analysis window length at 25 kHz)
     overlap_length: int = (
-        0  # Tuned: 25000 (1 second overlap between consecutive windows)
+        25000  # Tuned: 25000 (1 second overlap between consecutive windows)
     )
     fs: float = 500 * 50  # Tuned: 25000.0 (POW reporting rate)
     f0_nom: float = 50.0  # Tuned: 50.0 (nominal fundamental frequency)
@@ -97,6 +69,7 @@ class Federate:
         self.labels: list[str] = []  # channel labels (== voltage_id)
         self.v_buf: dict[str, list[float]] = {}
         self.i_buf: dict[str, list[float]] = {}
+        self.samples_processed = 0
 
         try:
             self.load_static_inputs()
@@ -207,30 +180,6 @@ class Federate:
                 self.v_buf[label].append(float(v_map[v_id]))
                 self.i_buf[label].append(float(i_map[i_id]))
 
-    def _ready_windows(self) -> dict[str, dict]:
-        """
-        For each channel that has accumulated a full window, slice it, advance
-        the buffer, and return {label: process_window result}.
-        """
-        wl = self.static.window_length
-        step = max(1, wl - self.static.overlap_length)
-        results: dict[str, dict] = {}
-
-        for label in self.labels:
-            # Drain buffer to process all complete windows and restore the correct overlap size
-            while len(self.v_buf[label]) >= wl and len(self.i_buf[label]) >= wl:
-
-                v_win = np.asarray(self.v_buf[label][:wl], dtype=float)
-                i_win = np.asarray(self.i_buf[label][:wl], dtype=float)
-                results[label] = swod.process_window(
-                    v_win, i_win, self.static.fs, self.static.f0_nom, self.cfg
-                )
-                # advance buffers
-                self.v_buf[label] = self.v_buf[label][step:]
-                self.i_buf[label] = self.i_buf[label][step:]
-
-        return results
-
     # ── Result mapping ───────────────────────────────────────────────────
 
     @staticmethod
@@ -328,11 +277,8 @@ class Federate:
     # ── Run loop ─────────────────────────────────────────────────────────
 
     def step(self, t: float) -> None:
-        """Read the latest measurements, buffer them, and process ready windows."""
-        if not (
-            self.sub.voltages_abs.is_updated() and self.sub.currents_abs.is_updated()
-        ):
-            return
+        """Read the latest measurements, buffer them, and process ready windows.
+        """
 
         voltages = VoltagesMagnitude.model_validate(self.sub.voltages_abs.json)
         currents = CurrentsMagnitude.model_validate(self.sub.currents_abs.json)
@@ -340,9 +286,39 @@ class Federate:
         self._ensure_channels(voltages, currents)
         self._append_samples(voltages, currents)
 
-        results = self._ready_windows()
-        if results:
-            self._publish_results(results, t)
+        wl = self.static.window_length
+        step = max(1, wl - self.static.overlap_length)
+
+        if not self.labels:
+            return
+
+        first_label = self.labels[0]
+        num_ready_windows = 0
+        while len(self.v_buf[first_label]) >= wl + num_ready_windows * step:
+            num_ready_windows += 1
+
+        for w_idx in range(num_ready_windows):
+            results_for_window: dict[str, dict] = {}
+            for label in self.labels:
+                v_win = np.asarray(
+                    self.v_buf[label][w_idx * step : w_idx * step + wl],
+                    dtype=float,
+                )
+                i_win = np.asarray(
+                    self.i_buf[label][w_idx * step : w_idx * step + wl],
+                    dtype=float,
+                )
+                results_for_window[label] = swod.process_window(
+                    v_win, i_win, self.static.fs, self.static.f0_nom, self.cfg
+                )
+
+            self._publish_results(results_for_window, t)
+
+        if num_ready_windows > 0:
+            for label in self.labels:
+                self.v_buf[label] = self.v_buf[label][num_ready_windows * step :]
+                self.i_buf[label] = self.i_buf[label][num_ready_windows * step :]
+            self.samples_processed += num_ready_windows * step
 
     def run(self) -> None:
         self.fed.enter_initializing_mode()
@@ -350,19 +326,14 @@ class Federate:
         logger.info("Entering execution mode")
 
         try:
-            granted = 0.0
+            granted = h.helicsFederateRequestTime(self.fed, h.HELICS_TIME_MAXTIME)
             while granted < h.HELICS_TIME_MAXTIME:
-                if not (
+                if (
                     self.sub.voltages_abs.is_updated()
                     and self.sub.currents_abs.is_updated()
                 ):
-                    granted = h.helicsFederateRequestTime(
-                        self.fed, h.HELICS_TIME_MAXTIME
-                    )
-                    continue
-                self.step(granted)
-                granted = h.helicsFederateRequestTime(
-                    self.fed, granted + self.static.deltat
+                    self.step(granted)
+                    granted = h.helicsFederateRequestTime(self.fed, h.HELICS_TIME_MAXTIME
                 )
         finally:
             self.destroy()
