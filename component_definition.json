@@ -1,6 +1,6 @@
 {
     "directory": "swod_federate",
-    "execute_function": "python federate.py",
+    "execute_function": "python -m src.pnnl_emt_swod.federate",
     "static_inputs": [
         {
             "type": "",
