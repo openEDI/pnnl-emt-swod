@@ -312,7 +312,25 @@ class Federate:
                     v_win, i_win, self.static.fs, self.static.f0_nom, self.cfg
                 )
 
-            self._publish_results(results_for_window, voltages.time)
+            self._publish_results(results_for_window, t)
+
+            # Comparative logging matching example.py/swod.py output format
+            # We log the first label or all labels; since there are 24 labels, logging the first one is enough or we can log a summary
+            # Let's log A11 (which is bus4.1, bus4.2, bus4.3 - wait, let's log any detected channel to keep it concise)
+            for label, r in results_for_window.items():
+                start = self.samples_processed + w_idx * step
+                n_common = len(r.get("common_freqs", []))
+                n_pairs = len(r.get("sideband_pairs", []))
+                if r["valid"]:
+                    logger.info(
+                        f"    {label}: t={start / self.static.fs:6.1f}s | "
+                        f"f0={r['f_est']:.4f} Hz | DETECTED  ({n_common} freqs, {n_pairs} pairs)"
+                    )
+                else:
+                    logger.info(
+                        f"    {label}: t={start / self.static.fs:6.1f}s | "
+                        f"f0={r['f_est']:.4f} Hz | no detection"
+                    )
 
         if num_ready_windows > 0:
             for label in self.labels:
