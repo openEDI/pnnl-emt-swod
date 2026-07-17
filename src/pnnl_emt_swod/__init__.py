@@ -8,10 +8,12 @@ This component provides:
 __version__ = "0.1.0"
 
 from .federate import ComponentParameters, Federate, run_simulator
+from . import plotting
 
 __all__ = [
     "__version__",
     "run_simulator",
     "Federate",
     "ComponentParameters",
+    "plotting",
 ]

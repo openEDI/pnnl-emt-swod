@@ -33,6 +33,7 @@ Four figures, each answering a specific question:
 """
 
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -464,3 +465,189 @@ def plot_results(output_dir: str, window_sec: float = None) -> None:
     plot_def_ssp_over_time(power, output_dir)
     plot_source_localization_snapshot(power, output_dir)
     plot_timing_histogram(timing, output_dir, window_sec)
+
+
+def plot_results_from_feather(outputs_dir: str | Path) -> list:
+    """Generate reports directly from standard recorder feather files."""
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    from pathlib import Path
+    
+    outputs_dir = Path(outputs_dir)
+    freq_df = pd.read_feather(outputs_dir / "swod_oscillation_frequency.feather")
+    amp_df = pd.read_feather(outputs_dir / "swod_oscillation_amplitude.feather")
+    ssp_real_df = pd.read_feather(outputs_dir / "swod_real_ssp.feather")
+    ssp_react_df = pd.read_feather(outputs_dir / "swod_reactive_ssp.feather")
+    
+    channels = [c for c in freq_df.columns if c != "time"]
+    figures = []
+    
+    # ── Figure 1: Detection Timeline ──
+    n_ch = len(channels)
+    n_cols = 2
+    n_rows = (n_ch + 1) // n_cols
+    fig1, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(13, 2.8 * n_rows),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    fig1.suptitle("Detected Oscillation Frequencies Over Time", fontsize=13, y=1.01)
+    
+    for idx, ch in enumerate(channels):
+        ax = axes[idx // n_cols, idx % n_cols]
+        times = freq_df["time"].to_numpy()
+        freqs = freq_df[ch].to_numpy()
+        real_ssp = ssp_real_df[ch].to_numpy()
+        
+        det_mask = freqs > 0.01
+        
+        ax.set_title(ch, fontsize=10, fontweight="bold", pad=3)
+        ax.grid(True, alpha=0.3)
+        
+        if not np.any(det_mask):
+            ax.text(
+                0.5,
+                0.5,
+                "no detections",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                color="grey",
+                fontsize=9,
+            )
+        else:
+            t_det = times[det_mask]
+            f_det = freqs[det_mask]
+            complete = np.abs(real_ssp[det_mask]) > 1e-9
+            
+            colors = ["#1f77b4" if c else "#ff7f0e" for c in complete]
+            ax.scatter(
+                t_det,
+                f_det,
+                c=colors,
+                s=40,
+                alpha=0.75,
+                linewidths=0.4,
+                edgecolors="k",
+            )
+        ax.set_ylabel("Freq (Hz)", fontsize=8)
+        
+    for idx in range(n_ch, n_rows * n_cols):
+        axes[idx // n_cols, idx % n_cols].set_visible(False)
+        
+    for col in range(n_cols):
+        axes[-1, col].set_xlabel("Time (s)", fontsize=9)
+        
+    legend_els = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="#1f77b4",
+            markersize=8,
+            label="Complete sidebands (B)",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor="#ff7f0e",
+            markersize=8,
+            label="Freq match only (A)",
+        ),
+    ]
+    fig1.legend(
+        handles=legend_els,
+        loc="lower center",
+        ncol=2,
+        fontsize=9,
+        bbox_to_anchor=(0.5, -0.02),
+    )
+    fig1.tight_layout()
+    figures.append(fig1)
+    
+    # ── Figure 2: Real and Reactive SSP over time ──
+    fig2, (ax_real, ax_react) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    fig2.suptitle("DEF and SSP (Real/Reactive Power) Over Time — All Channels", fontsize=13, y=1.01)
+    
+    ax_real.set_ylabel("Real SSP\n(Pp + Pm)", fontsize=8)
+    ax_react.set_ylabel("Reactive SSP\n(Qp + Qm)", fontsize=8)
+    
+    for ax in (ax_real, ax_react):
+        ax.axhline(0, color="k", lw=0.8, ls="--", zorder=1)
+        ax.grid(True, alpha=0.3)
+        
+    cmap = plt.get_cmap("tab10")
+    for idx, ch in enumerate(channels):
+        times = freq_df["time"].to_numpy()
+        det_mask = freq_df[ch].to_numpy() > 0.01
+        if not np.any(det_mask):
+            continue
+        
+        color = cmap(idx % 10)
+        ax_real.plot(times[det_mask], ssp_real_df[ch].to_numpy()[det_mask], color=color, lw=1.5, label=ch)
+        ax_react.plot(times[det_mask], ssp_react_df[ch].to_numpy()[det_mask], color=color, lw=1.5, label=ch)
+        
+    ax_real.legend(loc="upper right", fontsize=8)
+    ax_react.set_xlabel("Time (s)", fontsize=10)
+    fig2.tight_layout()
+    figures.append(fig2)
+    
+    # ── Figure 3: Source Localization Snapshot ──
+    avg_ssp_real = []
+    avg_ssp_react = []
+    avg_apparent = []
+    
+    for ch in channels:
+        freqs = freq_df[ch].to_numpy()
+        det_mask = freqs > 0.01
+        if np.any(det_mask):
+            real_vals = ssp_real_df[ch].to_numpy()[det_mask]
+            react_vals = ssp_react_df[ch].to_numpy()[det_mask]
+            avg_ssp_real.append(float(np.mean(real_vals)))
+            avg_ssp_react.append(float(np.mean(react_vals)))
+            avg_apparent.append(float(np.mean(np.sqrt(real_vals**2 + react_vals**2))))
+        else:
+            avg_ssp_real.append(0.0)
+            avg_ssp_react.append(0.0)
+            avg_apparent.append(0.0)
+            
+    fig3, axes = plt.subplots(1, 3, figsize=(12, 4))
+    x = np.arange(len(channels))
+    
+    metrics = ["SSP (Real)", "SSP (Reactive)", "Apparent Osc. Power"]
+    data_lists = [avg_ssp_real, avg_ssp_react, avg_apparent]
+    
+    for idx, (vals, label) in enumerate(zip(data_lists, metrics)):
+        ax = axes[idx]
+        colors = ["#d62728" if v < 0 else "#1f77b4" for v in vals]
+        ax.bar(x, vals, color=colors, edgecolor="white", linewidth=0.5)
+        ax.axhline(0, color="k", lw=0.8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(channels, rotation=45, ha="right", fontsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.set_title(label, fontsize=10, fontweight="bold")
+        
+    legend_els = [
+        Patch(facecolor="#d62728", label="Negative (potential source)"),
+        Patch(facecolor="#1f77b4", label="Positive"),
+    ]
+    fig3.legend(
+        handles=legend_els,
+        loc="lower center",
+        ncol=2,
+        fontsize=9,
+        bbox_to_anchor=(0.5, -0.02),
+    )
+    fig3.suptitle("Source Localization Metrics — Time-Averaged", fontsize=13, y=1.01)
+    fig3.tight_layout()
+    figures.append(fig3)
+    
+    return figures
+
