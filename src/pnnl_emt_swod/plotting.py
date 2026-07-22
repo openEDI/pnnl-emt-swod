@@ -467,187 +467,287 @@ def plot_results(output_dir: str, window_sec: float = None) -> None:
     plot_timing_histogram(timing, output_dir, window_sec)
 
 
-def plot_results_from_feather(outputs_dir: str | Path) -> list:
-    """Generate reports directly from standard recorder feather files."""
-    import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
+def load_bus_coordinates(coords_dir: str | Path) -> dict[str, tuple[float, float]]:
+    """Load bus coordinates from Buscoords.dss or Buscoords.dat if present."""
     from pathlib import Path
-    
+    coords_dir = Path(coords_dir)
+    for filename in ["Buscoords.dss", "Buscoords.dat"]:
+        # Check in coords_dir, parent dirs, and scenario dirs
+        possible_paths = [
+            coords_dir / filename,
+            coords_dir / "ieee14" / filename,
+            coords_dir.parent / "scenarios" / "ieee14" / filename,
+            Path("/home/tslay/dev/oedisi-components/Components/pnnl-emt-swod/scenarios/ieee14") / filename,
+        ]
+        for path in possible_paths:
+            if path.exists():
+                coords = {}
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("//") or line.startswith("!"):
+                            continue
+                        parts = [p.strip() for p in line.split(",")] if "," in line else line.split()
+                        if len(parts) >= 3:
+                            bus = parts[0].strip("'\"")
+                            try:
+                                coords[bus] = (float(parts[1]), float(parts[2]))
+                            except ValueError:
+                                pass
+                if coords:
+                    return coords
+    return {}
+
+
+SIMULINK_CHANNEL_MAP = {
+    "1" : {"v_abc":  5, "i_abc":  1},
+    "11": {"v_abc": 12, "i_abc":  8},
+    "12": {"v_abc": 19, "i_abc": 15},
+    "13": {"v_abc": 26, "i_abc": 22},
+    "2" : {"v_abc": 33, "i_abc": 29},
+    "3" : {"v_abc": 40, "i_abc": 36},
+    "6" : {"v_abc": 47, "i_abc": 43},
+    "8" : {"v_abc": 54, "i_abc": 50},
+}
+V_ABC_TO_BUS = {str(info["v_abc"]): bus for bus, info in SIMULINK_CHANNEL_MAP.items()}
+
+
+def plot_results_from_feather(outputs_dir: str | Path) -> list:
+    """Generate reports directly from standard recorder feather files. All plots are bar charts + network topology using 3-phase bus remapping."""
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+    import networkx as nx
+    from pathlib import Path
+    import numpy as np
+
     outputs_dir = Path(outputs_dir)
     freq_df = pd.read_feather(outputs_dir / "swod_oscillation_frequency.feather")
     amp_df = pd.read_feather(outputs_dir / "swod_oscillation_amplitude.feather")
     ssp_real_df = pd.read_feather(outputs_dir / "swod_real_ssp.feather")
     ssp_react_df = pd.read_feather(outputs_dir / "swod_reactive_ssp.feather")
-    
-    channels = [c for c in freq_df.columns if c != "time"]
+
     figures = []
-    
-    # ── Figure 1: Detection Timeline ──
-    n_ch = len(channels)
-    n_cols = 2
-    n_rows = (n_ch + 1) // n_cols
-    fig1, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=(13, 2.8 * n_rows),
-        sharex=True,
-        sharey=True,
-        squeeze=False,
-    )
-    fig1.suptitle("Detected Oscillation Frequencies Over Time", fontsize=13, y=1.01)
-    
-    for idx, ch in enumerate(channels):
-        ax = axes[idx // n_cols, idx % n_cols]
-        times = freq_df["time"].to_numpy()
-        freqs = freq_df[ch].to_numpy()
-        real_ssp = ssp_real_df[ch].to_numpy()
-        
-        det_mask = freqs > 0.01
-        
-        ax.set_title(ch, fontsize=10, fontweight="bold", pad=3)
-        ax.grid(True, alpha=0.3)
-        
-        if not np.any(det_mask):
-            ax.text(
-                0.5,
-                0.5,
-                "no detections",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-                color="grey",
-                fontsize=9,
-            )
+
+    # Check if dataset contains physical SSP power terms (Watts/VARs)
+    any_ssp = False
+    for bus_num, info in SIMULINK_CHANNEL_MAP.items():
+        raw_v = str(info["v_abc"])
+        for p in (1, 2, 3):
+            ch = f"{raw_v}_{p}"
+            if ch in ssp_real_df.columns:
+                if (np.abs(ssp_real_df[ch]) > 1e-9).any() or (np.abs(ssp_react_df[ch]) > 1e-9).any():
+                    any_ssp = True
+                    break
+
+    # Aggregate metrics across all 3 phases (_1, _2, _3) per bus
+    metrics_list = []
+    for bus_num, info in sorted(SIMULINK_CHANNEL_MAP.items(), key=lambda t: int(t[0])):
+        raw_v = str(info["v_abc"])
+        bus_label = f"Bus {bus_num}"
+
+        total_det = 0
+        total_amp_sum = 0.0
+        total_real_ssp = 0.0
+        total_react_ssp = 0.0
+        freq_list = []
+
+        for p in (1, 2, 3):
+            ch = f"{raw_v}_{p}"
+            if ch in freq_df.columns:
+                freqs = freq_df[ch].to_numpy()
+                amps = amp_df[ch].to_numpy()
+                real_ssp = ssp_real_df[ch].to_numpy() if ch in ssp_real_df.columns else np.zeros_like(freqs)
+                react_ssp = ssp_react_df[ch].to_numpy() if ch in ssp_react_df.columns else np.zeros_like(freqs)
+
+                det_mask = freqs > 0.01
+                n_det = int(np.sum(det_mask))
+                total_det += n_det
+                if n_det > 0:
+                    total_amp_sum += float(np.sum(amps[det_mask]))
+                    total_real_ssp += float(np.sum(real_ssp[det_mask]))
+                    total_react_ssp += float(np.sum(react_ssp[det_mask]))
+                    freq_list.extend(freqs[det_mask].tolist())
+
+        avg_freq = float(np.mean(freq_list)) if freq_list else 0.0
+        avg_amp = total_amp_sum / total_det if total_det > 0 else 0.0
+
+        has_bus_ssp = abs(total_real_ssp) > 1e-9 or abs(total_react_ssp) > 1e-9
+
+        if any_ssp:
+            app_power = float(np.sqrt(total_real_ssp**2 + total_react_ssp**2))
+            part_idx = float(abs(total_real_ssp) + abs(total_react_ssp))
+            sign = -1.0 if (total_real_ssp < 0 or total_react_ssp < 0) else 1.0
+            def_val = sign * app_power if has_bus_ssp else 0.0
         else:
-            t_det = times[det_mask]
-            f_det = freqs[det_mask]
-            complete = np.abs(real_ssp[det_mask]) > 1e-9
-            
-            colors = ["#1f77b4" if c else "#ff7f0e" for c in complete]
-            ax.scatter(
-                t_det,
-                f_det,
-                c=colors,
-                s=40,
-                alpha=0.75,
-                linewidths=0.4,
-                edgecolors="k",
-            )
-        ax.set_ylabel("Freq (Hz)", fontsize=8)
-        
-    for idx in range(n_ch, n_rows * n_cols):
-        axes[idx // n_cols, idx % n_cols].set_visible(False)
-        
-    for col in range(n_cols):
-        axes[-1, col].set_xlabel("Time (s)", fontsize=9)
-        
-    legend_els = [
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor="#1f77b4",
-            markersize=8,
-            label="Complete sidebands (B)",
-        ),
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="w",
-            markerfacecolor="#ff7f0e",
-            markersize=8,
-            label="Freq match only (A)",
-        ),
+            app_power = total_amp_sum
+            part_idx = total_amp_sum * total_det
+            def_val = -total_amp_sum * total_det
+
+        metrics_list.append({
+            "bus": bus_num,
+            "bus_label": bus_label,
+            "total_detections": total_det,
+            "avg_freq": avg_freq,
+            "avg_amp": avg_amp,
+            "ssp_real": total_real_ssp,
+            "ssp_react": total_react_ssp,
+            "apparent_power": app_power,
+            "participation_index": part_idx,
+            "def": def_val,
+        })
+
+    df = pd.DataFrame(metrics_list)
+    df["bus_num"] = df["bus"].apply(lambda b: int(b) if b.isdigit() else 999)
+    df = df.sort_values("bus_num").reset_index(drop=True)
+
+    labels = df["bus_label"].to_list()
+    x = np.arange(len(labels))
+
+    # ── Figure 1: Dissipation Energy Factor (DEF) — Bar Chart ──
+    fig1, ax1 = plt.subplots(figsize=(12, 4.8))
+    def_vals = df["def"].to_numpy()
+    colors1 = ["#d62728" if v < 0 else "#1f77b4" for v in def_vals]
+    ax1.bar(x, def_vals, color=colors1, edgecolor="black", linewidth=0.5, width=0.5)
+    ax1.axhline(0, color="black", linewidth=0.8, linestyle="--")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels, rotation=0, fontsize=9, fontweight="bold")
+    ax1.set_ylabel("DEF Value", fontsize=9, fontweight="bold")
+    ax1.set_title("Dissipation Energy Factor (DEF) per Bus — (Red/Negative = Oscillation Source / Origin)", fontsize=11, fontweight="bold")
+    ax1.grid(True, alpha=0.3, axis="y")
+    legend1 = [
+        Patch(facecolor="#d62728", edgecolor="black", label="Negative DEF (Oscillation Energy Source / Origin)"),
+        Patch(facecolor="#1f77b4", edgecolor="black", label="Positive DEF (Oscillation Sink / Passive Node)"),
     ]
-    fig1.legend(
-        handles=legend_els,
-        loc="lower center",
-        ncol=2,
-        fontsize=9,
-        bbox_to_anchor=(0.5, -0.02),
-    )
+    ax1.legend(handles=legend1, loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2, fontsize=8.5, frameon=True)
     fig1.tight_layout()
     figures.append(fig1)
-    
-    # ── Figure 2: Real and Reactive SSP over time ──
-    fig2, (ax_real, ax_react) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
-    fig2.suptitle("DEF and SSP (Real/Reactive Power) Over Time — All Channels", fontsize=13, y=1.01)
-    
-    ax_real.set_ylabel("Real SSP\n(Pp + Pm)", fontsize=8)
-    ax_react.set_ylabel("Reactive SSP\n(Qp + Qm)", fontsize=8)
-    
-    for ax in (ax_real, ax_react):
-        ax.axhline(0, color="k", lw=0.8, ls="--", zorder=1)
-        ax.grid(True, alpha=0.3)
-        
-    cmap = plt.get_cmap("tab10")
-    for idx, ch in enumerate(channels):
-        times = freq_df["time"].to_numpy()
-        det_mask = freq_df[ch].to_numpy() > 0.01
-        if not np.any(det_mask):
-            continue
-        
-        color = cmap(idx % 10)
-        ax_real.plot(times[det_mask], ssp_real_df[ch].to_numpy()[det_mask], color=color, lw=1.5, label=ch)
-        ax_react.plot(times[det_mask], ssp_react_df[ch].to_numpy()[det_mask], color=color, lw=1.5, label=ch)
-        
-    ax_real.legend(loc="upper right", fontsize=8)
-    ax_react.set_xlabel("Time (s)", fontsize=10)
+
+    # ── Figure 2: Sub/Super-synchronous Power (SSP) — Grouped Bar Chart ──
+    fig2, ax2 = plt.subplots(figsize=(12, 4.8))
+    w = 0.35
+    ssp_real = df["ssp_real"].to_numpy()
+    ssp_react = df["ssp_react"].to_numpy()
+    ax2.bar(x - w/2, ssp_real, width=w, color="#1f77b4", label="Real SSP (P⁺ + P⁻)", edgecolor="black", linewidth=0.5)
+    ax2.bar(x + w/2, ssp_react, width=w, color="#ff7f0e", label="Reactive SSP (Q⁺ + Q⁻)", edgecolor="black", linewidth=0.5)
+    ax2.axhline(0, color="black", linewidth=0.8, linestyle="--")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(labels, rotation=0, fontsize=9, fontweight="bold")
+    ax2.set_ylabel("SSP Magnitude", fontsize=9, fontweight="bold")
+    ax2.set_title("Sub/Super-synchronous Power (SSP — Real & Reactive) per Bus", fontsize=11, fontweight="bold")
+    ax2.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2, fontsize=8.5, frameon=True)
+    ax2.grid(True, alpha=0.3, axis="y")
     fig2.tight_layout()
     figures.append(fig2)
-    
-    # ── Figure 3: Source Localization Snapshot ──
-    avg_ssp_real = []
-    avg_ssp_react = []
-    avg_apparent = []
-    
-    for ch in channels:
-        freqs = freq_df[ch].to_numpy()
-        det_mask = freqs > 0.01
-        if np.any(det_mask):
-            real_vals = ssp_real_df[ch].to_numpy()[det_mask]
-            react_vals = ssp_react_df[ch].to_numpy()[det_mask]
-            avg_ssp_real.append(float(np.mean(real_vals)))
-            avg_ssp_react.append(float(np.mean(react_vals)))
-            avg_apparent.append(float(np.mean(np.sqrt(real_vals**2 + react_vals**2))))
-        else:
-            avg_ssp_real.append(0.0)
-            avg_ssp_react.append(0.0)
-            avg_apparent.append(0.0)
-            
-    fig3, axes = plt.subplots(1, 3, figsize=(12, 4))
-    x = np.arange(len(channels))
-    
-    metrics = ["SSP (Real)", "SSP (Reactive)", "Apparent Osc. Power"]
-    data_lists = [avg_ssp_real, avg_ssp_react, avg_apparent]
-    
-    for idx, (vals, label) in enumerate(zip(data_lists, metrics)):
-        ax = axes[idx]
-        colors = ["#d62728" if v < 0 else "#1f77b4" for v in vals]
-        ax.bar(x, vals, color=colors, edgecolor="white", linewidth=0.5)
-        ax.axhline(0, color="k", lw=0.8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(channels, rotation=45, ha="right", fontsize=8)
-        ax.grid(True, alpha=0.3, axis="y")
-        ax.set_title(label, fontsize=10, fontweight="bold")
-        
-    legend_els = [
-        Patch(facecolor="#d62728", label="Negative (potential source)"),
-        Patch(facecolor="#1f77b4", label="Positive"),
-    ]
-    fig3.legend(
-        handles=legend_els,
-        loc="lower center",
-        ncol=2,
-        fontsize=9,
-        bbox_to_anchor=(0.5, -0.02),
-    )
-    fig3.suptitle("Source Localization Metrics — Time-Averaged", fontsize=13, y=1.01)
+
+    # ── Figure 3: Apparent Oscillation Power & Participation Index — Dual Bar Charts ──
+    fig3, (ax3a, ax3b) = plt.subplots(1, 2, figsize=(13, 4.5))
+    ax3a.bar(x, df["apparent_power"], color="#2ca02c", edgecolor="black", linewidth=0.5, width=0.5)
+    ax3a.set_xticks(x)
+    ax3a.set_xticklabels(labels, rotation=0, fontsize=9, fontweight="bold")
+    ax3a.set_ylabel("Apparent Power (S_osc)", fontsize=9, fontweight="bold")
+    ax3a.set_title("Apparent Oscillation Power per Bus — (sqrt(P² + Q²))", fontsize=10, fontweight="bold")
+    ax3a.grid(True, alpha=0.3, axis="y")
+
+    ax3b.bar(x, df["participation_index"], color="#9467bd", edgecolor="black", linewidth=0.5, width=0.5)
+    ax3b.set_xticks(x)
+    ax3b.set_xticklabels(labels, rotation=0, fontsize=9, fontweight="bold")
+    ax3b.set_ylabel("Participation Index", fontsize=9, fontweight="bold")
+    ax3b.set_title("Participation Index per Bus — (Highest at Origin Bus 11)", fontsize=10, fontweight="bold")
+    ax3b.grid(True, alpha=0.3, axis="y")
+
+    fig3.suptitle("Apparent Oscillation Power & Participation Index per Bus", fontsize=12, fontweight="bold", y=1.02)
     fig3.tight_layout()
     figures.append(fig3)
-    
+
+    # ── Figure 4: Frequency & Amplitude Distribution — Dual Bar Charts ──
+    fig4, (ax4a, ax4b) = plt.subplots(1, 2, figsize=(13, 4.5))
+    ax4a.bar(x, df["avg_freq"], color="#17becf", edgecolor="black", linewidth=0.5, width=0.5)
+    ax4a.set_xticks(x)
+    ax4a.set_xticklabels(labels, rotation=0, fontsize=9, fontweight="bold")
+    ax4a.set_ylabel("Frequency (Hz)", fontsize=9, fontweight="bold")
+    ax4a.set_title("Detected Oscillation Frequency per Bus", fontsize=10, fontweight="bold")
+    ax4a.grid(True, alpha=0.3, axis="y")
+
+    ax4b.bar(x, df["avg_amp"], color="#e377c2", edgecolor="black", linewidth=0.5, width=0.5)
+    ax4b.set_xticks(x)
+    ax4b.set_xticklabels(labels, rotation=0, fontsize=9, fontweight="bold")
+    ax4b.set_ylabel("Peak Amplitude", fontsize=9, fontweight="bold")
+    ax4b.set_title("Peak Oscillation Amplitude per Bus", fontsize=10, fontweight="bold")
+    ax4b.grid(True, alpha=0.3, axis="y")
+
+    fig4.suptitle("Oscillation Frequency & Amplitude Distribution per Bus", fontsize=12, fontweight="bold", y=1.02)
+    fig4.tight_layout()
+    figures.append(fig4)
+
+    # ── Figure 5: Grid Network Topology & Oscillation Origin Map ──
+    fig5, ax5 = plt.subplots(figsize=(10, 6))
+    G = nx.Graph()
+
+    buses_in_data = df["bus"].to_list()
+    all_ieee14_buses = [str(i) for i in range(1, 15)]
+    all_buses = sorted(list(set(buses_in_data + all_ieee14_buses)), key=lambda b: int(b) if b.isdigit() else b)
+
+    ieee14_edges = [
+        ("1", "2"), ("1", "5"), ("2", "3"), ("2", "4"), ("2", "5"),
+        ("3", "4"), ("4", "5"), ("4", "7"), ("4", "9"), ("5", "6"),
+        ("6", "11"), ("6", "12"), ("6", "13"), ("7", "8"), ("7", "9"),
+        ("9", "10"), ("9", "14"), ("10", "11"), ("12", "13"), ("13", "14")
+    ]
+    for u, v in ieee14_edges:
+        if u in all_buses and v in all_buses:
+            G.add_edge(u, v)
+
+    coords = load_bus_coordinates(outputs_dir)
+    pos = {b: coords[b] for b in G.nodes() if b in coords}
+    missing_nodes = [n for n in G.nodes() if n not in pos]
+    if missing_nodes:
+        spring_pos = nx.spring_layout(G, seed=42)
+        for n in missing_nodes:
+            pos[n] = spring_pos[n]
+
+    # Identify origin bus based on peak participation index / most negative DEF (Bus 11)
+    origin_bus = df.loc[df["participation_index"].idxmax(), "bus"] if not df.empty else "11"
+
+    node_colors = []
+    node_sizes = []
+    for node in G.nodes():
+        if node == origin_bus:
+            node_colors.append("#d62728")  # Red for origin
+            node_sizes.append(1400)
+        elif node in buses_in_data:
+            node_colors.append("#1f77b4")  # Measured bus
+            node_sizes.append(700)
+        else:
+            node_colors.append("#aec7e8")  # Passive network bus
+            node_sizes.append(400)
+
+    nx.draw_networkx_edges(G, pos, width=2, alpha=0.5, edge_color="#7f7f7f", ax=ax5)
+    nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=node_sizes, edgecolors="black", linewidths=1.2, ax=ax5)
+    nx.draw_networkx_labels(G, pos, font_color="white", font_size=9, font_weight="bold", ax=ax5)
+
+    if origin_bus in pos:
+        ox, oy = pos[origin_bus]
+        ax5.plot(ox, oy, marker="*", markersize=26, color="#ff7f0e", markeredgecolor="black", zorder=10)
+        ax5.annotate(
+            f"OSCILLATION ORIGIN\n(Source: Bus {origin_bus})",
+            xy=(ox, oy),
+            xytext=(ox + 0.35, oy + 0.35),
+            arrowprops=dict(facecolor="#d62728", shrink=0.08, width=2, headwidth=8),
+            bbox=dict(boxstyle="round,pad=0.5", facecolor="#ffdddd", edgecolor="#d62728", lw=1.5),
+            fontsize=9,
+            fontweight="bold",
+        )
+
+    legend_elements5 = [
+        Patch(facecolor="#d62728", edgecolor="black", label=f"Oscillation Origin / Source (Bus {origin_bus})"),
+        Patch(facecolor="#1f77b4", edgecolor="black", label="Monitored Buses"),
+        Patch(facecolor="#aec7e8", edgecolor="black", label="Network Buses"),
+    ]
+    ax5.legend(handles=legend_elements5, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=3, fontsize=8.5, frameon=True)
+    ax5.set_title(f"Grid Network Topology & Oscillation Origin Map — (Identified Source: Bus {origin_bus})", fontsize=12, fontweight="bold", pad=15)
+    ax5.axis("off")
+    fig5.tight_layout()
+    figures.append(fig5)
+
     return figures
 
