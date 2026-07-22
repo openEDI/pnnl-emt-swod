@@ -351,8 +351,7 @@ class Federate:
                     and self.sub.currents_abs.is_updated()
                 ):
                     self.step(granted)
-                    granted = h.helicsFederateRequestTime(self.fed, h.HELICS_TIME_MAXTIME
-                )
+                granted = h.helicsFederateRequestTime(self.fed, h.HELICS_TIME_MAXTIME)
         finally:
             self.destroy()
 
